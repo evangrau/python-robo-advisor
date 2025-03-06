@@ -1,14 +1,15 @@
 import yfinance as yf
 import pandas as pd
 from loguru import logger as log
-from utils.api import get_api_connection
+from utils.api import get_apca_api_connection
+from utils.supabase_methods import create_record_in_table
 from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.trading.requests import GetAssetsRequest
 from alpaca.trading.enums import AssetClass, AssetStatus
 from concurrent.futures import ThreadPoolExecutor
 
-API = get_api_connection()
+APCA_API = get_apca_api_connection()
 
 def get_all_tradable_symbols():
     """
@@ -19,7 +20,7 @@ def get_all_tradable_symbols():
             asset_class=AssetClass.US_EQUITY,
             status=AssetStatus.ACTIVE
         )
-        assets = API.get_all_assets(request_params)
+        assets = APCA_API.get_all_assets(request_params)
         symbols = [asset.symbol for asset in assets if asset.tradable]
         log.info(f"Fetched {len(symbols)} tradable symbols from Alpaca")
         return symbols
@@ -130,7 +131,7 @@ def get_current_position(symbol):
     If no position exists, return 0.
     """
     try:
-        position = API.get_open_position(symbol)
+        position = APCA_API.get_open_position(symbol)
         return float(position.qty)
     except Exception as e:
         if 'position does not exist' in str(e):
@@ -148,7 +149,7 @@ def get_account_equity():
         float: The account equity.
     """
     try:
-        account = API.get_account()
+        account = APCA_API.get_account()
         equity = float(account.equity)
         log.info(f"Account equity: ${equity:.2f}")
         return equity
@@ -194,8 +195,13 @@ def execute_order(symbol, signal, quantity):
                         time_in_force=TimeInForce.DAY
                     )
         log.info(f"Buy order data: {market_order_data}")
-        # order = API.submit_order(order_data=market_order_data)
+        # order = APCA_API.submit_order(order_data=market_order_data)
         # log.info(f"Buy order submitted: {order}")
+        create_record_in_table("orders", {
+            "symbol": symbol,
+            "order_type": "BUY",
+            "quantity": quantity
+        })
     elif signal == 'SELL' and current_qty > 0:
         log.info(f"Placing a SELL order for {quantity} shares of {symbol}")
         market_order_data = MarketOrderRequest(
@@ -205,7 +211,12 @@ def execute_order(symbol, signal, quantity):
                         time_in_force=TimeInForce.DAY
                     )
         log.info(f"Sell order data: {market_order_data}")
-        # order = API.submit_order(order_data=market_order_data)
+        # order = APCA_API.submit_order(order_data=market_order_data)
         # log.info(f"Sell order submitted: {order}")
+        create_record_in_table("orders", {
+            "symbol": symbol,
+            "order_type": "SELL",
+            "quantity": quantity
+        })
     else:
         log.info("No order executed. Either already in desired position or signal unchanged.")

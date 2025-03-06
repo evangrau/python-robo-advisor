@@ -1,7 +1,8 @@
 import os
 from dotenv import load_dotenv
 from loguru import logger as log
-from utils.methods import fetch_stock_data, generate_trading_signal, execute_order, determine_order_quantity, get_all_tradable_symbols, filter_best_symbols
+from utils.alpaca_methods import fetch_stock_data, generate_trading_signal, execute_order, determine_order_quantity, get_all_tradable_symbols, filter_best_symbols
+from utils.supabase_methods import get_all_records_in_table, get_number_of_records_in_table, get_all_symbols_from_db
 
 # Load environment variables from .env file
 load_dotenv()
@@ -21,7 +22,12 @@ log.add(
         )
 
 def main():
-    symbols = get_all_tradable_symbols()
+    symbols = get_all_symbols_from_db()
+
+    if not symbols:
+        log.error("No symbols found in the database. Exiting.")
+        return
+
     best_symbols = filter_best_symbols(symbols)
 
     for symbol in best_symbols:
