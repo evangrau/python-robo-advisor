@@ -1,8 +1,9 @@
 import yfinance as yf
 import pandas as pd
+import json
 from loguru import logger as log
 from api import get_apca_api_connection
-from supabase_methods import create_record_in_table
+from supabase_methods import create_record_in_table, get_record_from_table
 from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.trading.requests import GetAssetsRequest
@@ -21,9 +22,9 @@ def get_all_tradable_assets() -> list:
             status=AssetStatus.ACTIVE
         )
         assets = APCA_API.get_all_assets(request_params)
-        tradable_assets = [asset for asset in assets if asset.tradable]
+        tradable_assets = set([asset for asset in assets if asset.tradable])
         log.info(f"Fetched {len(tradable_assets)} tradable assets from Alpaca")
-        return tradable_assets
+        return list(tradable_assets)
     except Exception as e:
         log.error(f"Error fetching tradable assets: {e}")
         return []
@@ -38,54 +39,61 @@ def fetch_stock_data(symbol: str, period: str) -> pd.DataFrame:
 
         if data is None or data.empty:
             log.warning(f"No data found for {symbol}. Skipping.")
-            return None
+            return pd.DataFrame()
 
         log.info(f"Fetched {len(data)} records for {symbol}")
         return data
 
     except Exception as e:
         log.error(f"Error fetching data for {symbol}: {e}")
-        return None
+        return pd.DataFrame()
     
 def fetch_and_process_symbol(symbol: str) -> str:
     """
-    Fetch stock data and determine if the symbol meets trading criteria.
+    Retrieve stock data from the database (stored as JSONB) and determine if the symbol meets trading criteria.
     """
-    df = fetch_stock_data(symbol, period="1mo")
+    record = get_record_from_table("stock_data", symbol)  # Fetch JSONB data
 
-    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
-        log.warning(f"Skipping {symbol}: DataFrame is empty or invalid.")
+    if not record or 'data' not in record:
+        log.warning(f"Skipping {symbol}: No stock data found in database.")
         return None
 
-    # Check DataFrame structure
-    log.info(f"{symbol} DataFrame columns: {df.columns}")
-
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)  # Flatten MultiIndex
-
-    if 'Close' not in df.columns or 'Volume' not in df.columns:
-        log.warning(f"Skipping {symbol}: Missing required columns (Close, Volume).")
-        return None
-
-    # Ensure numeric conversion
     try:
-        df['Close'] = pd.to_numeric(df['Close'], errors='coerce')
-        df['Volume'] = pd.to_numeric(df['Volume'], errors='coerce')
+        # Convert JSONB to dictionary
+        stock_data = json.loads(record['data'])
 
-        avg_volume = df['Volume'].dropna().mean()
-        close_mean = df['Close'].dropna().mean()
-        price_range = df['Close'].max() - df['Close'].min()
+        # Convert JSON dictionary into a Pandas DataFrame
+        df = pd.DataFrame.from_dict(stock_data, orient="index")
+
+        # Convert index to datetime format and sort
+        df.index = pd.to_datetime(df.index)
+        df.sort_index(inplace=True)
+
+        # Ensure required columns exist
+        required_columns = {'close', 'volume'}
+        available_columns = set(df.columns.str.lower())
+
+        if not required_columns.issubset(available_columns):
+            log.warning(f"Skipping {symbol}: Missing required columns {required_columns - available_columns}.")
+            return None
+
+        # Convert data to numeric types
+        df['close'] = pd.to_numeric(df['close'], errors='coerce')
+        df['volume'] = pd.to_numeric(df['volume'], errors='coerce')
+
+        # Compute filtering metrics
+        avg_volume = df['volume'].dropna().mean()
+        close_mean = df['close'].dropna().mean()
+        price_range = df['close'].max() - df['close'].min()
 
         # Apply filtering criteria
-        if pd.notna(avg_volume) and avg_volume > 1_000_000:
-            if pd.notna(close_mean) and price_range / close_mean > 0.05:
-                return symbol  # Valid symbol
+        if avg_volume > 1_000_000 and price_range / close_mean > 0.05:
+            return symbol  # Symbol meets criteria
 
     except Exception as e:
         log.error(f"Error processing {symbol}: {e}")
 
     return None  # Symbol does not meet criteria
-
     
 def filter_best_symbols(symbols: list) -> list:
     """
@@ -95,16 +103,16 @@ def filter_best_symbols(symbols: list) -> list:
     best_symbols = []
 
     # Use ThreadPoolExecutor to fetch and process symbols in parallel
-    with ThreadPoolExecutor(max_workers=5) as executor:
+    with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(fetch_and_process_symbol, symbols))
 
     # Collect valid results
     best_symbols = [symbol for symbol in results if symbol is not None]
 
     log.info(f"Selected {len(best_symbols)} best symbols for trading.")
-    return best_symbols
+    return sorted(best_symbols)
 
-def generate_trading_signal(df, short_window, long_window):
+def generate_trading_signal(df, short_window, long_window) -> str:
     """
     Compute short and long moving averages and generate a trading signal.
     Returns 'BUY' if the short MA is above the long MA, otherwise returns 'SELL'.
@@ -176,7 +184,7 @@ def determine_order_quantity(risk_percent: int, stop_loss_distance: int) -> int:
     quantity = risk_amount / stop_loss_distance
     return int(quantity)  # Returning an integer number of share
 
-def execute_order(symbol: str, signal: str, quantity: float) -> None:
+def execute_order(symbol: str, signal: str, quantity: float):
     """
     Depending on the generated signal and current holdings,
     submit a market order using Alpaca.

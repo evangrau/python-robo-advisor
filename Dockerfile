@@ -18,4 +18,3 @@ WORKDIR /app
 RUN uv sync --frozen
 
 # ENTRYPOINT [ "tail", "-f", "/dev/null" ]
-CMD ["uv", "run", "main.py"]

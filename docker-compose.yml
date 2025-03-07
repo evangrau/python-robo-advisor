@@ -1,5 +1,13 @@
 services:
     app:
         build: .
+        image: python-robo-advisor-app
+        command: uv run main.py
+        volumes:
+            - ./logs:/app/logs
+    data-update:
+        build: .
+        image: python-robo-advisor-data-update
+        command: uv run data_update.py
         volumes:
             - ./logs:/app/logs
