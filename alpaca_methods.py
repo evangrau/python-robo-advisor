@@ -1,8 +1,8 @@
 import yfinance as yf
 import pandas as pd
 from loguru import logger as log
-from utils.api import get_apca_api_connection
-from utils.supabase_methods import create_record_in_table
+from api import get_apca_api_connection
+from supabase_methods import create_record_in_table
 from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.trading.requests import GetAssetsRequest
@@ -11,9 +11,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 APCA_API = get_apca_api_connection()
 
-def get_all_tradable_symbols():
+def get_all_tradable_assets() -> list:
     """
-    Fetch all tradable stock symbols from Alpaca.
+    Fetch all tradable stock assets from Alpaca.
     """
     try:
         request_params = GetAssetsRequest(
@@ -21,14 +21,14 @@ def get_all_tradable_symbols():
             status=AssetStatus.ACTIVE
         )
         assets = APCA_API.get_all_assets(request_params)
-        symbols = [asset.symbol for asset in assets if asset.tradable]
-        log.info(f"Fetched {len(symbols)} tradable symbols from Alpaca")
-        return symbols
+        tradable_assets = [asset for asset in assets if asset.tradable]
+        log.info(f"Fetched {len(tradable_assets)} tradable assets from Alpaca")
+        return tradable_assets
     except Exception as e:
-        log.error(f"Error fetching tradable symbols: {e}")
+        log.error(f"Error fetching tradable assets: {e}")
         return []
 
-def fetch_stock_data(symbol, period='max'):
+def fetch_stock_data(symbol: str, period: str) -> pd.DataFrame:
     """
     Fetch stock data and handle errors properly.
     """
@@ -47,7 +47,7 @@ def fetch_stock_data(symbol, period='max'):
         log.error(f"Error fetching data for {symbol}: {e}")
         return None
     
-def fetch_and_process_symbol(symbol):
+def fetch_and_process_symbol(symbol: str) -> str:
     """
     Fetch stock data and determine if the symbol meets trading criteria.
     """
@@ -87,7 +87,7 @@ def fetch_and_process_symbol(symbol):
     return None  # Symbol does not meet criteria
 
     
-def filter_best_symbols(symbols):
+def filter_best_symbols(symbols: list) -> list:
     """
     Parallelized fetching and filtering of stock symbols.
     Processes all symbols dynamically.
@@ -125,7 +125,7 @@ def generate_trading_signal(df, short_window, long_window):
     # Generate the trading signal
     return 'BUY' if short_ma.iloc[-1] > long_ma.iloc[-1] else 'SELL'
 
-def get_current_position(symbol):
+def get_current_position(symbol: str) -> float:
     """
     Return the current position (quantity of shares) for the given symbol.
     If no position exists, return 0.
@@ -140,7 +140,7 @@ def get_current_position(symbol):
             log.error(f"Error fetching position for {symbol}: {e}")
         return 0.0
     
-def get_account_equity():
+def get_account_equity() -> float:
     """
     Retrieve and return the account's equity.
     Equity is the net value of your account (assets minus liabilities).
@@ -157,7 +157,7 @@ def get_account_equity():
         log.error(f"Error fetching account equity: {e}")
         return None
     
-def determine_order_quantity(risk_percent, stop_loss_distance):
+def determine_order_quantity(risk_percent: int, stop_loss_distance: int) -> int:
     """
     Determine the number of shares to trade based on risk management.
     
@@ -176,7 +176,7 @@ def determine_order_quantity(risk_percent, stop_loss_distance):
     quantity = risk_amount / stop_loss_distance
     return int(quantity)  # Returning an integer number of share
 
-def execute_order(symbol, signal, quantity):
+def execute_order(symbol: str, signal: str, quantity: float) -> None:
     """
     Depending on the generated signal and current holdings,
     submit a market order using Alpaca.

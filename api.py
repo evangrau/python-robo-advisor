@@ -1,6 +1,7 @@
 import os
 from dotenv import load_dotenv
 from alpaca.trading.client import TradingClient
+from supabase import create_client
 
 # Load environment variables from .env file
 load_dotenv()
@@ -21,4 +22,4 @@ def get_supabase_api_connection():
     """
     Create a connection to the Supabase API and return the client object."
     """
-    return None
+    return create_client(SUPABASE_URL, SUPABASE_API_KEY)
